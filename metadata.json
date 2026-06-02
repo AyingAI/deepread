@@ -1,0 +1,6 @@
+{
+  "name": "Deepread",
+  "description": "An elegant, immersive reading environment focused on building a book through deep thinking rather than just consuming content.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
