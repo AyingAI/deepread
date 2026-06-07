@@ -55,16 +55,16 @@ const App: React.FC = () => {
         )}
         
         {view === AppState.DESK && (
-          <motion.div key="desk" className="w-full h-full">
+          <motion.div key="desk" className="w-full h-full" exit={{ opacity: 0 }} transition={{ duration: 0.3 }}>
             <DeskView onSelectBook={handleSelectBook} />
           </motion.div>
         )}
 
         {view === AppState.RITUAL && currentBook && (
-          <motion.div key="ritual" className="w-full h-full">
-            <RitualView 
-              book={currentBook} 
-              onComplete={handleRitualComplete} 
+          <motion.div key="ritual" className="w-full h-full" exit={{ opacity: 0 }} transition={{ duration: 0.3 }}>
+            <RitualView
+              book={currentBook}
+              onComplete={handleRitualComplete}
               onBack={handleBack}
             />
           </motion.div>

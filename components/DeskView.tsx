@@ -2,8 +2,8 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Book as BookType } from '../types';
-import { Plus } from 'lucide-react';
-import { saveBookToDB, getBooksFromDB } from '../utils/db';
+import { Plus, Trash2 } from 'lucide-react';
+import { saveBookToDB, getBooksFromDB, deleteBookFromDB } from '../utils/db';
 
 // Access the global ePub instance loaded via <script> tag
 const ePub = (window as any).ePub;
@@ -43,16 +43,38 @@ export const DeskView: React.FC<DeskViewProps> = ({ onSelectBook }) => {
         const arrayBuffer = await file.arrayBuffer();
         const book = ePub(arrayBuffer);
         const metadata = await book.loaded.metadata;
-        
+
+        const safeTitle = metadata.title || file.name.replace(/\.epub$/i, '');
+        const safeAuthor = metadata.creator || 'Unknown';
+
         // Generate a random-ish consistent color based on title length
         const colors = ['#8B4513', '#2F4F4F', '#556B2F', '#800000', '#191970', '#483C32'];
-        const coverColor = colors[metadata.title.length % colors.length];
+        const coverColor = colors[safeTitle.length % colors.length];
+
+        // Try to extract cover image from EPUB
+        let coverImage: string | undefined;
+        try {
+          const coverUrl = await book.coverUrl();
+          if (coverUrl) {
+            const resp = await fetch(coverUrl);
+            const blob = await resp.blob();
+            coverImage = await new Promise<string>((resolve, reject) => {
+              const reader = new FileReader();
+              reader.onloadend = () => resolve(reader.result as string);
+              reader.onerror = reject;
+              reader.readAsDataURL(blob);
+            });
+          }
+        } catch {
+          // Cover extraction failed, fall back to coverColor
+        }
 
         const newBook: BookType = {
           id: Date.now().toString(),
-          title: metadata.title || file.name.replace('.epub', ''),
-          author: metadata.creator || 'Unknown',
+          title: safeTitle,
+          author: safeAuthor,
           coverColor: coverColor,
+          coverImage,
           progress: 0,
           sedimentLevel: 5 // Default thin book
         };
@@ -72,6 +94,18 @@ export const DeskView: React.FC<DeskViewProps> = ({ onSelectBook }) => {
   // Split books
   const activeBooks = books.filter(b => b.progress < 100);
   const sedimentBooks = books.filter(b => b.progress === 100);
+
+  const handleDeleteBook = async (e: React.MouseEvent, bookId: string, bookTitle: string) => {
+    e.stopPropagation();
+    if (!window.confirm(`确定删除《${bookTitle}》？\n\n这将同时删除该书的所有思维卡片，且无法恢复。`)) return;
+    try {
+      await deleteBookFromDB(bookId);
+      setBooks(prev => prev.filter(b => b.id !== bookId));
+    } catch (err) {
+      console.error('Failed to delete book:', err);
+      alert('删除失败，请重试');
+    }
+  };
 
   return (
     <motion.div 
@@ -208,10 +242,19 @@ export const DeskView: React.FC<DeskViewProps> = ({ onSelectBook }) => {
                              </div>
 
                              {/* Hover Tooltip - Useful since spine text can be hard to read */}
-                             <div className="absolute left-full top-1/2 -translate-y-1/2 ml-4 opacity-0 group-hover:opacity-100 transition-opacity z-50 pointer-events-none">
-                                 <div className="bg-[#FAF0E6] text-[#2a2a2a] px-3 py-2 rounded shadow-xl whitespace-nowrap">
-                                     <div className="font-serif-en font-bold text-xs mb-1">{book.title}</div>
-                                     <div className="text-[10px] text-gray-500 font-serif font-normal">已读</div>
+                             <div className="absolute left-full top-1/2 -translate-y-1/2 ml-4 opacity-0 group-hover:opacity-100 transition-opacity z-50 pointer-events-auto">
+                                 <div className="bg-[#FAF0E6] text-[#2a2a2a] px-3 py-2 rounded shadow-xl whitespace-nowrap flex items-start gap-2">
+                                     <div>
+                                         <div className="font-serif-en font-bold text-xs mb-1">{book.title}</div>
+                                         <div className="text-[10px] text-gray-500 font-serif font-normal">已读</div>
+                                     </div>
+                                     <button
+                                         onClick={(e) => handleDeleteBook(e, book.id, book.title)}
+                                         className="p-1 rounded text-gray-400 hover:text-red-700 hover:bg-red-50 transition-colors cursor-pointer flex-shrink-0"
+                                         title="删除此书"
+                                     >
+                                         <Trash2 size={12} />
+                                     </button>
                                  </div>
                              </div>
                         </motion.div>
@@ -238,31 +281,47 @@ export const DeskView: React.FC<DeskViewProps> = ({ onSelectBook }) => {
                             <div className="absolute top-4 left-4 w-full h-full bg-black/40 blur-md rounded-sm group-hover:blur-lg group-hover:scale-105 transition-all duration-500" />
                             
                             {/* Book Cover - Flat */}
-                            <div 
+                            <div
                                 className="w-[180px] h-[260px] relative rounded-r-sm shadow-inner overflow-hidden transform transition-transform duration-500 bg-[#FAF0E6]"
                                 style={{ backgroundColor: book.coverColor }}
                             >
+                                {/* Cover Image (if available) */}
+                                {book.coverImage && (
+                                    <img
+                                        src={book.coverImage}
+                                        alt={book.title}
+                                        className="absolute inset-0 w-full h-full object-cover z-0"
+                                    />
+                                )}
+                                {/* Delete button */}
+                                <button
+                                    onClick={(e) => handleDeleteBook(e, book.id, book.title)}
+                                    className="absolute top-2 right-2 z-20 p-1.5 rounded-full bg-black/30 text-[#FAF0E6]/60 opacity-0 group-hover:opacity-100 hover:bg-red-900/70 hover:text-[#FAF0E6] transition-all cursor-pointer"
+                                    title="删除此书"
+                                >
+                                    <Trash2 size={14} />
+                                </button>
                                 {/* Spine Texture (Left edge) */}
                                 <div className="absolute inset-y-0 left-0 w-3 bg-black/20 z-10" />
                                 <div className="absolute inset-y-0 left-3 w-[1px] bg-white/10 z-10" />
-                                
-                                {/* Cover Content */}
-                                <div className="p-6 h-full flex flex-col relative z-0">
+
+                                {/* Cover Content (title/author overlay) */}
+                                <div className="p-6 h-full flex flex-col relative z-10">
                                     <div className="w-full h-full border border-[#FAF0E6]/20 flex flex-col justify-between p-2">
-                                        <div className="font-serif-en font-bold text-xl leading-tight text-[#FAF0E6] mix-blend-hard-light drop-shadow-md text-center mt-4 line-clamp-4">
+                                        <div className="font-serif-en font-bold text-xl leading-tight text-[#FAF0E6] mix-blend-hard-light drop-shadow-md text-center mt-4 line-clamp-4" style={{ textShadow: book.coverImage ? '0 1px 4px rgba(0,0,0,0.7)' : undefined }}>
                                             {book.title}
                                         </div>
-                                        <div className="text-xs opacity-80 font-serif-en font-normal text-[#FAF0E6] text-center mb-4 tracking-widest line-clamp-2">
+                                        <div className="text-xs opacity-80 font-serif-en font-normal text-[#FAF0E6] text-center mb-4 tracking-widest line-clamp-2" style={{ textShadow: book.coverImage ? '0 1px 3px rgba(0,0,0,0.7)' : undefined }}>
                                             {book.author}
                                         </div>
                                     </div>
                                 </div>
 
-                                {/* Texture Overlay */}
-                                <div className="absolute inset-0 bg-[url('https://www.transparenttextures.com/patterns/canvas-orange.png')] opacity-20 mix-blend-overlay pointer-events-none" />
-                                
+                                {/* Texture Overlay (subtle on cover images too) */}
+                                <div className="absolute inset-0 bg-[url('https://www.transparenttextures.com/patterns/canvas-orange.png')] opacity-20 mix-blend-overlay pointer-events-none z-10" />
+
                                 {/* Light Sheen Gradient */}
-                                <div className="absolute inset-0 bg-gradient-to-br from-white/10 via-transparent to-black/20 pointer-events-none" />
+                                <div className="absolute inset-0 bg-gradient-to-br from-white/10 via-transparent to-black/20 pointer-events-none z-10" />
                             </div>
                         </motion.div>
                     ))}

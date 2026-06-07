@@ -94,7 +94,7 @@ export const LoginView: React.FC<LoginViewProps> = ({ onLogin }) => {
       {/* 2. BACKGROUND: Abstract City Silhouette */}
       <div className="absolute bottom-0 w-full h-[500px] pointer-events-none z-0 opacity-20 flex items-end justify-center">
          {/* Simple line horizon */}
-         <div className="absolute bottom-0 w-full h-[1px] bg-white/30 box-shadow-[0_0_20px_white]"></div>
+         <div className="absolute bottom-0 w-full h-[1px] bg-white/30 shadow-[0_0_20px_white]"></div>
          
          {cityBuildings.map((b, i) => (
              <div 
