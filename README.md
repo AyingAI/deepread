@@ -63,7 +63,7 @@
 ### 环境要求
 
 - Node.js 18+
-- 一个 OpenAI 兼容的 API 服务（小米 MIMO、OpenAI、DeepSeek 等）
+- 一个 OpenAI 兼容的 API 服务（OpenAI、DeepSeek 等）
 
 ### 安装
 
