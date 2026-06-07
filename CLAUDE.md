@@ -116,6 +116,10 @@ npm start      # 生产模式 dist/server.cjs
 - [x] AI 反思流式输出
   - 验收：npx tsc --noEmit + npm run build 通过；curl 真实 MIMO 请求通过，/api/ai/reflect 返回纯文本；in-app Browser 点击卡片"解释"后最终显示 AI 文本、无错误、spinner 结束。server.ts 流式解析 OpenAI SSE + AbortController；前端 ReadableStream 逐块 setAiResponse + requestSeqRef 防旧响应覆盖。
   - 观察：MIMO 首 token 偏慢，前几秒仍会显示等待状态，后续可优化首字等待提示。
+- [x] AI 配置 / 模型获取
+  - 排障记录：新增 AI 配置后，模型获取错误不是 CORS。Codex 验收发现 3000 服务未启动会导致 `Failed to fetch`；服务启动后 `/api/settings/models` 返回 400 "请先填写 API Key"。进一步定位旧 `server.ts` 的 `POST /api/settings` 会在 API Key 留空保存 `apiBase`/`model` 时重写 `.env.local` 并清空原 Key。
+  - 修复：`server.ts` 启动自动读取 `.env.local`；保存设置时合并旧 `MIMO_API_KEY`/`MIMO_API_BASE`/`MIMO_MODEL`，未传字段保留；`GET /api/settings` 返回 `hasApiKey`，不返回真实 Key；DeskView API Key 输入框根据 `hasApiKey` 显示"已配置 API Key，留空不更新"。
+  - 验收：`npx tsc --noEmit`、`npm run build` 通过；当前 `.env.local` 的 `MIMO_API_KEY` length=0，需要用户重新填一次真实 Key 后才能获取模型。
 - [x] 阅读统计（累计时长完成，卡片数量阅读页已有实时展示；书桌统计暂未做）
   - 验收：npm run build 通过；Codex 浏览器 smoke 通过，阅读器 iframe 正常，header 显示累计阅读时长，右侧卡片数量正常。
 - [x] 全文 / 卡片搜索

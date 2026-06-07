@@ -1,15 +1,70 @@
 import express from "express";
+import fs from "fs";
 import path from "path";
 import { createServer as createViteServer } from "vite";
 
-const MIMO_API_BASE = process.env.MIMO_API_BASE || "https://token-plan-cn.xiaomimimo.com/v1";
-const MIMO_MODEL = process.env.MIMO_MODEL || "mimo-v2.5";
+const ENV_KEYS = ["MIMO_API_KEY", "MIMO_API_BASE", "MIMO_MODEL"] as const;
+
+/** 读取 .env.local 中的 MIMO_* 到 process.env（仅当 process.env 中未设置时） */
+function loadEnvLocal() {
+  try {
+    const envPath = path.join(process.cwd(), ".env.local");
+    const content = fs.readFileSync(envPath, "utf-8");
+    for (const line of content.split("\n")) {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith("#")) continue;
+      const idx = trimmed.indexOf("=");
+      if (idx === -1) continue;
+      const key = trimmed.slice(0, idx).trim();
+      const val = trimmed.slice(idx + 1).trim();
+      if (ENV_KEYS.includes(key as any) && val && !process.env[key]) {
+        process.env[key] = val;
+      }
+    }
+  } catch {
+    // .env.local 不存在，忽略
+  }
+}
+
+/** 读取 .env.local 的当前快照（key→value），用于合并写入 */
+function readEnvSnapshot(): Record<string, string> {
+  const snap: Record<string, string> = {};
+  try {
+    const envPath = path.join(process.cwd(), ".env.local");
+    const content = fs.readFileSync(envPath, "utf-8");
+    for (const line of content.split("\n")) {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith("#")) continue;
+      const idx = trimmed.indexOf("=");
+      if (idx === -1) continue;
+      const key = trimmed.slice(0, idx).trim();
+      const val = trimmed.slice(idx + 1).trim();
+      if (ENV_KEYS.includes(key as any)) snap[key] = val;
+    }
+  } catch {
+    // 文件不存在
+  }
+  return snap;
+}
+
+const getApiBase = () => process.env.MIMO_API_BASE || "https://api.openai.com/v1";
+const getModel = () => process.env.MIMO_MODEL || "gpt-4o-mini";
 
 async function startServer() {
+  loadEnvLocal();
   const app = express();
   const PORT = 3000;
 
   app.use(express.json());
+
+  // CORS support for development
+  app.use((req, res, next) => {
+    res.header("Access-Control-Allow-Origin", req.headers.origin || "*");
+    res.header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
+    res.header("Access-Control-Allow-Headers", "Content-Type, Authorization");
+    if (req.method === "OPTIONS") return res.sendStatus(204);
+    next();
+  });
 
   // API Route for AI features in "Deepread"
   app.post("/api/ai/reflect", async (req, res) => {
@@ -80,14 +135,14 @@ async function startServer() {
         if (!upstreamDone && !res.writableEnded) abortController.abort();
       });
 
-      const response = await fetch(`${MIMO_API_BASE}/chat/completions`, {
+      const response = await fetch(`${getApiBase()}/chat/completions`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           "Authorization": `Bearer ${apiKey}`,
         },
         body: JSON.stringify({
-          model: MIMO_MODEL,
+          model: getModel(),
           temperature: 0.8,
           stream: true,
           messages: [
@@ -187,6 +242,66 @@ async function startServer() {
     } catch (error: any) {
       console.error("AI API Error:", error);
       res.status(500).json({ error: error.message || "请求服务器出错，请稍后重试。" });
+    }
+  });
+
+  // --- Settings API ---
+  app.get("/api/settings", (_req, res) => {
+    const key = process.env.MIMO_API_KEY || "";
+    res.json({
+      hasApiKey: !!key,
+      apiKey: key ? key.slice(0, 3) + "****" + key.slice(-4) : "",
+      apiBase: process.env.MIMO_API_BASE || "https://api.openai.com/v1",
+      model: process.env.MIMO_MODEL || "gpt-4o-mini",
+    });
+  });
+
+  app.post("/api/settings", (req, res) => {
+    try {
+      const { apiKey, apiBase, model } = req.body;
+      // 合并：未传或空字符串的字段保留旧值
+      const snapshot = readEnvSnapshot();
+      const merged: Record<string, string> = {};
+      for (const k of ENV_KEYS) {
+        const incoming = k === "MIMO_API_KEY" ? apiKey : k === "MIMO_API_BASE" ? apiBase : model;
+        merged[k] = (incoming && incoming.trim()) || snapshot[k] || process.env[k] || "";
+      }
+      // 写回 .env.local
+      const envPath = path.join(process.cwd(), ".env.local");
+      const lines = ENV_KEYS.map(k => `${k}=${merged[k]}`);
+      fs.writeFileSync(envPath, lines.join("\n") + "\n");
+      // 立即生效
+      for (const k of ENV_KEYS) {
+        if (merged[k]) process.env[k] = merged[k];
+      }
+      res.json({ ok: true });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message || "保存失败" });
+    }
+  });
+
+  app.post("/api/settings/models", async (req, res) => {
+    try {
+      const { apiKey, apiBase } = req.body;
+      const key = apiKey || process.env.MIMO_API_KEY;
+      const base = (apiBase || process.env.MIMO_API_BASE || "https://api.openai.com/v1").replace(/\/+$/, "");
+      if (!key) return res.status(400).json({ error: "请先填写 API Key" });
+
+      const response = await fetch(`${base}/models`, {
+        headers: { "Authorization": `Bearer ${key}` },
+      });
+      const text = await response.text();
+      if (!response.ok) {
+        return res.status(response.status).json({ error: `获取模型列表失败 (${response.status}): ${text.slice(0, 200)}` });
+      }
+      let data: any;
+      try { data = JSON.parse(text); } catch {
+        return res.status(502).json({ error: "上游 API 返回了非 JSON 响应" });
+      }
+      const models = (data.data || []).map((m: any) => m.id).sort();
+      res.json({ models });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message || "网络连接失败" });
     }
   });
 

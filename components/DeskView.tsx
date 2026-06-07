@@ -2,7 +2,7 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Book as BookType } from '../types';
-import { Plus, Trash2 } from 'lucide-react';
+import { Plus, Trash2, Settings, Eye, EyeOff } from 'lucide-react';
 import { saveBookToDB, getBooksFromDB, deleteBookFromDB } from '../utils/db';
 
 // Access the global ePub instance loaded via <script> tag
@@ -15,6 +15,83 @@ interface DeskViewProps {
 export const DeskView: React.FC<DeskViewProps> = ({ onSelectBook }) => {
   const [books, setBooks] = useState<BookType[]>([]);
   const [isUploading, setIsUploading] = useState(false);
+
+  // Settings state
+  const [showSettings, setShowSettings] = useState(false);
+  const [settingsApiKey, setSettingsApiKey] = useState('');
+  const [settingsApiBase, setSettingsApiBase] = useState('');
+  const [settingsModel, setSettingsModel] = useState('');
+  const [showApiKey, setShowApiKey] = useState(false);
+  const [settingsSaved, setSettingsSaved] = useState(false);
+  const [settingsError, setSettingsError] = useState<string | null>(null);
+  const [hasApiKey, setHasApiKey] = useState(false);
+  const [modelsList, setModelsList] = useState<string[]>([]);
+  const [isLoadingModels, setIsLoadingModels] = useState(false);
+
+  const openSettings = async () => {
+    setShowSettings(true);
+    setSettingsSaved(false);
+    setSettingsError(null);
+    setShowApiKey(false);
+    setModelsList([]);
+    try {
+      const res = await fetch('/api/settings');
+      const data = await res.json();
+      setSettingsApiKey('');
+      setSettingsApiBase(data.apiBase || '');
+      setSettingsModel(data.model || '');
+      setHasApiKey(!!data.hasApiKey);
+    } catch {
+      setSettingsApiBase('https://api.openai.com/v1');
+      setSettingsModel('gpt-4o-mini');
+    }
+  };
+
+  const fetchModels = async () => {
+    setIsLoadingModels(true);
+    setSettingsError(null);
+    setModelsList([]);
+    try {
+      const res = await fetch('/api/settings/models', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ apiKey: settingsApiKey.trim() || undefined, apiBase: settingsApiBase.trim() || undefined }),
+      });
+      const text = await res.text();
+      let data: any;
+      try { data = JSON.parse(text); } catch { throw new Error(text || `服务器返回非 JSON (${res.status})`); }
+      if (!res.ok) throw new Error(data.error || '获取失败');
+      setModelsList(data.models || []);
+      if (data.models?.length === 0) setSettingsError('未获取到可用模型');
+    } catch (err: any) {
+      const msg = err?.name === 'TypeError' && err?.message === 'Failed to fetch'
+        ? '网络连接失败，请确认服务已启动'
+        : (err.message || '获取模型列表失败');
+      setSettingsError(msg);
+    } finally {
+      setIsLoadingModels(false);
+    }
+  };
+
+  const saveSettings = async () => {
+    setSettingsError(null);
+    try {
+      const body: Record<string, string> = {};
+      if (settingsApiKey.trim()) body.apiKey = settingsApiKey.trim();
+      if (settingsApiBase.trim()) body.apiBase = settingsApiBase.trim();
+      if (settingsModel.trim()) body.model = settingsModel.trim();
+      const res = await fetch('/api/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) throw new Error('保存失败');
+      setSettingsSaved(true);
+      setTimeout(() => setSettingsSaved(false), 2000);
+    } catch (err: any) {
+      setSettingsError(err.message || '保存失败，请重试');
+    }
+  };
 
   useEffect(() => {
     const loadBooks = async () => {
@@ -352,6 +429,137 @@ export const DeskView: React.FC<DeskViewProps> = ({ onSelectBook }) => {
 
         {/* Right Margin Spacer */}
         <div className="w-[150px] pointer-events-none hidden md:block" />
+
+        {/* Settings Button - Top Right */}
+        <button
+          onClick={openSettings}
+          className="absolute top-6 right-6 z-40 p-2.5 rounded-full bg-[#FAF0E6]/10 text-[#FAF0E6]/40 hover:text-[#FAF0E6]/80 hover:bg-[#FAF0E6]/15 transition-all cursor-pointer backdrop-blur-sm"
+          title="AI 配置"
+        >
+          <Settings size={18} />
+        </button>
+
+        {/* Settings Modal */}
+        <AnimatePresence>
+          {showSettings && (
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="fixed inset-0 z-[200] flex items-center justify-center bg-black/50 backdrop-blur-sm"
+              onClick={e => { if (e.target === e.currentTarget) setShowSettings(false); }}
+            >
+              <motion.div
+                initial={{ opacity: 0, y: 30, scale: 0.96 }}
+                animate={{ opacity: 1, y: 0, scale: 1 }}
+                exit={{ opacity: 0, y: 20, scale: 0.96 }}
+                transition={{ type: 'spring', stiffness: 300, damping: 30 }}
+                className="bg-[#FAF0E6] w-full max-w-md mx-4 rounded-sm shadow-[0_20px_60px_rgba(92,64,51,0.25)] border border-[#8B4513]/10 relative overflow-hidden"
+              >
+                <div className="absolute inset-0 pointer-events-none opacity-30 mix-blend-multiply bg-[url('https://www.transparenttextures.com/patterns/cream-paper.png')]" />
+
+                <div className="relative z-10 p-8">
+                  <div className="flex items-center justify-between mb-6">
+                    <h2 className="text-lg font-serif font-bold text-[#5C4033] tracking-wider">AI 配置</h2>
+                    <button onClick={() => setShowSettings(false)} className="text-[#5C4033]/40 hover:text-[#5C4033] transition-colors text-xl cursor-pointer">×</button>
+                  </div>
+
+                  <p className="text-xs font-serif text-[#5C4033]/50 mb-6 leading-relaxed">
+                    配置 OpenAI 兼容的 API 接口。支持 OpenAI、DeepSeek 等模型服务。密钥仅保存在本地 .env.local 文件中。
+                  </p>
+
+                  <div className="space-y-5">
+                    {/* API Key */}
+                    <div>
+                      <label className="block text-xs uppercase tracking-[0.15em] text-[#8B4513]/50 font-serif font-bold mb-1.5">API Key</label>
+                      <div className="relative">
+                        <input
+                          type={showApiKey ? 'text' : 'password'}
+                          value={settingsApiKey}
+                          onChange={e => setSettingsApiKey(e.target.value)}
+                          placeholder={hasApiKey ? "已配置 API Key，留空不更新" : "输入 API Key"}
+                          className="w-full bg-white/40 border border-[#8B4513]/15 rounded px-3 py-2 pr-10 text-[#2a2a2a] font-mono text-sm outline-none focus:border-[#8B4513]/40 placeholder-[#8B4513]/20"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => setShowApiKey(!showApiKey)}
+                          className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-[#8B4513]/30 hover:text-[#8B4513]/60 transition-colors cursor-pointer"
+                        >
+                          {showApiKey ? <EyeOff size={14} /> : <Eye size={14} />}
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* API Base */}
+                    <div>
+                      <label className="block text-xs uppercase tracking-[0.15em] text-[#8B4513]/50 font-serif font-bold mb-1.5">API Base URL</label>
+                      <input
+                        type="text"
+                        value={settingsApiBase}
+                        onChange={e => setSettingsApiBase(e.target.value)}
+                        placeholder="https://api.openai.com/v1"
+                        className="w-full bg-white/40 border border-[#8B4513]/15 rounded px-3 py-2 text-[#2a2a2a] font-mono text-sm outline-none focus:border-[#8B4513]/40 placeholder-[#8B4513]/20"
+                      />
+                    </div>
+
+                    {/* Model */}
+                    <div>
+                      <label className="block text-xs uppercase tracking-[0.15em] text-[#8B4513]/50 font-serif font-bold mb-1.5">模型名称</label>
+                      <div className="flex gap-2">
+                        <input
+                          type="text"
+                          value={settingsModel}
+                          onChange={e => setSettingsModel(e.target.value)}
+                          placeholder="gpt-4o-mini"
+                          className="flex-1 bg-white/40 border border-[#8B4513]/15 rounded px-3 py-2 text-[#2a2a2a] font-mono text-sm outline-none focus:border-[#8B4513]/40 placeholder-[#8B4513]/20"
+                        />
+                        <button
+                          onClick={fetchModels}
+                          disabled={isLoadingModels}
+                          className="px-3 py-2 text-xs font-serif font-bold text-[#5C4033]/70 bg-white/30 border border-[#8B4513]/15 rounded hover:bg-white/50 transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed flex-shrink-0"
+                          title="从 API 获取可用模型列表"
+                        >
+                          {isLoadingModels ? '获取中...' : '获取模型'}
+                        </button>
+                      </div>
+                      {/* Models dropdown */}
+                      {modelsList.length > 0 && (
+                        <div className="mt-2 max-h-40 overflow-y-auto border border-[#8B4513]/15 rounded bg-white/60">
+                          {modelsList.map(m => (
+                            <button
+                              key={m}
+                              onClick={() => setSettingsModel(m)}
+                              className={`w-full text-left px-3 py-1.5 text-xs font-mono transition-colors cursor-pointer ${settingsModel === m ? 'bg-[#8B4513]/15 text-[#5C4033]' : 'text-[#4A4A4A] hover:bg-[#8B4513]/5'}`}
+                            >
+                              {m}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  {settingsError && (
+                    <div className="mt-4 text-xs text-red-700/80 font-serif">{settingsError}</div>
+                  )}
+
+                  <div className="flex items-center justify-end gap-3 mt-8">
+                    <button onClick={() => setShowSettings(false)} className="px-4 py-2 text-sm font-serif text-[#5C4033]/60 hover:text-[#5C4033] transition-colors cursor-pointer">
+                      取消
+                    </button>
+                    {settingsSaved ? (
+                      <span className="px-4 py-2 text-sm font-serif text-[#8B4513]/60 tracking-wider">已保存 ✓</span>
+                    ) : (
+                      <button onClick={saveSettings} className="px-5 py-2 text-sm font-serif font-bold text-[#FAF0E6] bg-[#5C4033] hover:bg-[#8B4513] rounded transition-colors cursor-pointer tracking-wider">
+                        保存配置
+                      </button>
+                    )}
+                  </div>
+                </div>
+              </motion.div>
+            </motion.div>
+          )}
+        </AnimatePresence>
 
     </motion.div>
   );
