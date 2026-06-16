@@ -23,13 +23,13 @@ deepread/
   index.html          # SPA 入口，CDN 加载 Tailwind/epub.js/fonts
   index.css           # epub iframe 样式
   index.tsx           # React root mount
-  App.tsx             # 根组件，状态机：LOGIN → DESK → RITUAL → READING
+  App.tsx             # 根组件，状态机：ENTRY → DESK → RITUAL → READING
   server.ts           # Express 5，POST /api/ai/reflect 代理 MIMO API
   types.ts            # AppState / Book / ThoughtCard 类型定义
   constants.ts        # 占位（mock 数据已清理）
   utils/db.ts         # IndexedDB 封装（DeepreadDB v2）
   components/
-    LoginView.tsx      # 登录页（硬编码 myreader/123456，纯 UI）
+    EntryView.tsx      # 入口仪式页（夜景点灯动效，无认证）
     DeskView.tsx       # 书桌视图，EPUB 上传，活跃书+沉淀堆叠
     RitualView.tsx     # 阅读意向仪式
     ReadingView.tsx    # EPUB 阅读器 + 思维流卡片面板
@@ -79,5 +79,5 @@ npm start      # 生产模式 dist/server.cjs
 
 - 纯桌面端应用，不考虑移动端
 - 不部署 AI Studio，本地运行
-- 登录为纯 UI 装饰，无真实认证
+- 入口仪式为纯 UI 动效，无认证/无账号密码
 - epub.js 通过 CDN `<script>` 加载，用 `(window as any).ePub` 访问

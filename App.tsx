@@ -2,25 +2,23 @@
 import React, { useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { AppState, Book } from './types';
-import { LoginView } from './components/LoginView';
+import { EntryView } from './components/EntryView';
 import { DeskView } from './components/DeskView';
 import { RitualView } from './components/RitualView';
 import { ReadingView } from './components/ReadingView';
 import { updateBookMetadata } from './utils/db';
 
 const App: React.FC = () => {
-  const [view, setView] = useState<AppState>(AppState.LOGIN);
+  const [view, setView] = useState<AppState>(AppState.ENTRY);
   const [currentBook, setCurrentBook] = useState<Book | null>(null);
 
-  const handleLogin = () => {
+  const handleEnter = () => {
     setView(AppState.DESK);
   };
 
   const handleSelectBook = (book: Book) => {
     setCurrentBook(book);
-    
-    // Optimization: Only ask for intention if it's not set yet.
-    // Otherwise, resume reading immediately.
+
     if (book.intention && book.intention.trim().length > 0) {
         setView(AppState.READING);
     } else {
@@ -30,7 +28,6 @@ const App: React.FC = () => {
 
   const handleRitualComplete = async (userIntention: string) => {
     if (currentBook) {
-        // Persist the intention immediately
         const updatedBook = { ...currentBook, intention: userIntention };
         await updateBookMetadata(currentBook.id, { intention: userIntention });
         setCurrentBook(updatedBook);
@@ -39,8 +36,6 @@ const App: React.FC = () => {
   };
 
   const handleBack = async () => {
-    // When returning to desk, refresh the books is handled by DeskView's useEffect, 
-    // but clearing currentBook is key.
     setView(AppState.DESK);
     setCurrentBook(null);
   };
@@ -48,12 +43,12 @@ const App: React.FC = () => {
   return (
     <div className="w-full h-full">
       <AnimatePresence mode="wait">
-        {view === AppState.LOGIN && (
-          <motion.div key="login" className="w-full h-full" exit={{ opacity: 0 }}>
-            <LoginView onLogin={handleLogin} />
+        {view === AppState.ENTRY && (
+          <motion.div key="entry" className="w-full h-full" exit={{ opacity: 0 }}>
+            <EntryView onEnter={handleEnter} />
           </motion.div>
         )}
-        
+
         {view === AppState.DESK && (
           <motion.div key="desk" className="w-full h-full" exit={{ opacity: 0 }} transition={{ duration: 0.3 }}>
             <DeskView onSelectBook={handleSelectBook} />
@@ -71,17 +66,16 @@ const App: React.FC = () => {
         )}
 
         {view === AppState.READING && currentBook && (
-          <motion.div 
-            key="reading" 
+          <motion.div
+            key="reading"
             className="w-full h-full"
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             transition={{ duration: 1 }}
           >
-            <ReadingView 
-              book={currentBook} 
-              // Pass the intention from the book object itself now
-              intention={currentBook.intention || ''} 
+            <ReadingView
+              book={currentBook}
+              intention={currentBook.intention || ''}
               onBack={handleBack}
             />
           </motion.div>

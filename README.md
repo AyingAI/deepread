@@ -101,7 +101,7 @@ MIMO_MODEL=gpt-4o-mini
 npm run dev
 ```
 
-打开浏览器访问 `http://localhost:3000`，默认登录账号 `myreader` / `123456`。
+打开浏览器访问 `http://localhost:3000`，点击亮窗即可进入书桌。
 
 ---
 
@@ -140,13 +140,13 @@ deepread/
   index.html              # SPA 入口
   index.css               # epub iframe 样式
   index.tsx               # React 挂载
-  App.tsx                 # 根组件，状态机：登录 → 书桌 → 意图仪式 → 阅读
+  App.tsx                 # 根组件，状态机：入口 → 书桌 → 意图仪式 → 阅读
   server.ts               # Express 服务，AI 代理 + 设置 API
   types.ts                # 类型定义
   utils/
     db.ts                 # IndexedDB 封装
   components/
-    LoginView.tsx          # 登录页
+    EntryView.tsx          # 入口仪式页（点灯进入，无认证）
     DeskView.tsx           # 书桌视图（书籍管理 + AI 配置）
     RitualView.tsx         # 阅读意图仪式
     ReadingView.tsx        # 阅读器 + 思维卡片面板

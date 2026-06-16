@@ -1,6 +1,6 @@
 
 export enum AppState {
-  LOGIN = 'LOGIN',
+  ENTRY = 'ENTRY',
   DESK = 'DESK',
   RITUAL = 'RITUAL',
   READING = 'READING'
