@@ -14,7 +14,7 @@
 - framer-motion（动画）
 - IndexedDB（本地持久化：books / content / cards）
 - Tailwind CSS（CDN）
-- MIMO API（小米，mimo-v2.5 模型）
+- OpenAI 兼容 Chat Completions API（环境变量沿用 `MIMO_*` 历史命名）
 
 ## 项目结构
 
@@ -24,7 +24,7 @@ deepread/
   index.css           # epub iframe 样式
   index.tsx           # React root mount
   App.tsx             # 根组件，状态机：ENTRY → DESK → RITUAL → READING
-  server.ts           # Express 5，POST /api/ai/reflect 代理 MIMO API
+  server.ts           # Express 5，POST /api/ai/reflect 代理 OpenAI 兼容接口
   types.ts            # AppState / Book / ThoughtCard 类型定义
   constants.ts        # 占位（mock 数据已清理）
   utils/db.ts         # IndexedDB 封装（DeepreadDB v2）
@@ -46,9 +46,9 @@ npm start      # 生产模式 dist/server.cjs
 ## 环境变量
 
 `.env.local` 中配置：
-- `MIMO_API_KEY` — 必填
-- `MIMO_API_BASE` — 默认小米 MIMO 端点
-- `MIMO_MODEL` — 默认 mimo-v2.5
+- `MIMO_API_KEY` — 使用 AI 功能时必填
+- `MIMO_API_BASE` — 默认 OpenAI 兼容端点
+- `MIMO_MODEL` — 默认 gpt-4o-mini
 
 ## 当前进度
 
@@ -66,11 +66,11 @@ npm start      # 生产模式 dist/server.cjs
 
 ### 待做
 
-- [ ] 书籍删除功能（db.ts 已有 deleteBookFromDB，UI 未接入）
-- [ ] 书籍封面提取（当前用随机颜色，应从 EPUB 提取封面图）
-- [ ] 思维流卡片管理（删除卡片、排序）
-- [ ] 阅读完成回顾（读完时回看当初意图 vs 收获）
-- [ ] 导出能力（卡片导出为 Markdown）
+- [x] 书籍删除功能（删除书籍时同步清理内容和卡片）
+- [x] 书籍封面提取（失败时回落到封面颜色）
+- [x] 思维流卡片管理（删除卡片）
+- [x] 阅读完成回顾（读完时回看当初意图 vs 收获）
+- [x] 导出能力（卡片导出为 Markdown）
 - [ ] AI 反思质量优化（prompt 长度策略、流式输出）
 - [ ] 阅读统计（累计时长、卡片数量）
 - [ ] 全文/卡片搜索

@@ -14,7 +14,7 @@
 - framer-motion（动画）
 - IndexedDB（本地持久化：books / content / cards）
 - Tailwind CSS（CDN）
-- MIMO API（小米，mimo-v2.5 模型）
+- OpenAI 兼容 Chat Completions API（环境变量沿用 `MIMO_*` 历史命名）
 
 ## 项目结构
 
@@ -24,7 +24,7 @@ deepread/
   index.css           # epub iframe 样式
   index.tsx           # React root mount
   App.tsx             # 根组件，状态机：ENTRY → DESK → RITUAL → READING
-  server.ts           # Express 5，POST /api/ai/reflect 代理 MIMO API
+  server.ts           # Express 5，POST /api/ai/reflect 代理 OpenAI 兼容接口
   types.ts            # AppState / Book / ThoughtCard 类型定义
   constants.ts        # 占位（mock 数据已清理）
   utils/db.ts         # IndexedDB 封装（DeepreadDB v2）
@@ -46,16 +46,16 @@ npm start      # 生产模式 dist/server.cjs
 ## 环境变量
 
 `.env.local` 中配置：
-- `MIMO_API_KEY` — 必填
-- `MIMO_API_BASE` — 默认小米 MIMO 端点
-- `MIMO_MODEL` — 默认 mimo-v2.5
+- `MIMO_API_KEY` — 使用 AI 功能时必填
+- `MIMO_API_BASE` — 默认 OpenAI 兼容端点
+- `MIMO_MODEL` — 默认 gpt-4o-mini
 
 ## 当前进度
 
 ### 阶段一（核心闭环）— 已完成
 
-- [x] EPUB 渲染：epub.js native continuous scroll（`manager: "continuous"`, `flow: "scrolled"`），上下自由滚动
-- [x] continuous manager 稳定化：patch `createView` / trim / erase / `view.destroy`，扩大预加载窗口，保留离屏 iframe，避免章节边界跳闪
+- [x] EPUB 渲染：paginated 模式（`manager: "default"`, `flow: "paginated"`），滚轮 / 触控板上下滑动翻页
+- [x] iframe 内外 wheel 事件统一映射到 `rendition.next()` / `rendition.prev()`，避免容器内部滚动吞掉翻页
 - [x] 位置恢复：CFI 持久化到 IndexedDB，下次打开恢复到上次位置
 - [x] 真实进度：`book.locations.generate(1024)` 后用 `percentageFromCfi` 计算百分比
 - [x] 完成判定：progress >= 95 时标记为 100，书进入沉淀堆叠
@@ -86,7 +86,7 @@ npm start      # 生产模式 dist/server.cjs
 
 **回归检查清单（每次改 ReadingView 前核对）：**
 
-1. 连续上下滚动流畅，无章节边界跳闪
+1. 上下滑动能稳定翻到下一页 / 上一页
 2. 位置恢复准确（关闭再打开，停在上次位置）
 3. 进度百分比正确递增
 4. 目录跳转后位置正确
@@ -125,11 +125,11 @@ npm start      # 生产模式 dist/server.cjs
 - [x] 全文 / 卡片搜索
   - 实现：基于 spine item find 遍历全书（`book.spine.spineItems` → `item.load` → `item.find` → `item.unload`），最大取 50 条正文结果，UI 展示前 20 条；卡片搜索 quote/note lowercase 比较；`searchSeqRef` 防旧搜索覆盖新输入；失败时 `console.warn` 但仍展示卡片结果。
   - 搜索高亮：抽出 `applySearchHighlightToDocument` / `removeSearchHighlightsFromDocument` 纯函数；content hook 对新加载 iframe 调用；`navigateToResult` async 化后对 `rendition.getContents()` + viewerRef 所有 iframe 双重调用，修复已加载/保留 iframe 不触发 hook 导致跳转无高亮的生命周期漏洞；`clearHighlights` 无条件扫 viewer iframe（先清 highlightQueryRef，再尝试清 rendition contents，最后无论 rendition 是否存在都遍历 viewerRef 全部 iframe），避免 renditionRef 瞬时为空时残留高亮。
-  - 验收：npm run build 通过；in-app Browser 使用《工作、消费主义和新穷人》搜索"工作伦理"得到 52 条结果，点击第一条后搜索面板关闭、正文正常显示、关键词黄色高亮可见；再次打开搜索并关闭后，高亮清除。Codex 复验发现并修复两个问题：1) `display(cfi)` 前 content hook 高亮会破坏 epub.js CFI offset；2) continuous scroll 稳定补丁禁用 `createView`/`trim`/`erase`/`destroy` 后会影响搜索/目录程序化跳转，新增 `safeProgrammaticDisplay` 在程序化跳转期间临时恢复 `createView`/`trim`/`erase`/`destroy`，跳完后重新 stabilize。
+  - 验收：npm run build 通过；in-app Browser 使用《工作、消费主义和新穷人》搜索"工作伦理"得到 52 条结果，点击第一条后搜索面板关闭、正文正常显示、关键词黄色高亮可见；再次打开搜索并关闭后，高亮清除。当前分页阅读模式下，搜索和目录跳转统一走 `rendition.display()`。
 
 ### 风险与取舍
 
-- **iframe 内存**：continuous manager 保留更多离屏 iframe 会增加内存占用。桌面本地阅读器优先顺滑阅读，当前策略可接受。超大 EPUB（数千章）后续再做上限策略（如限制同时存活的 iframe 数）。
+- **分页粒度**：滚轮事件映射为 epub.js 页级导航，不再使用连续滚动。个别 EPUB 的封面、品牌页、空白页可能需要多次翻页才进入正文，这是源文件分页结构决定的。
 
 ## 约束
 

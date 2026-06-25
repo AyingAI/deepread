@@ -6,127 +6,11 @@ import { GripVertical, ArrowLeft, PenTool, Brain, MessageSquare, Link, Edit3, Li
 import { getBookContentFromDB, updateBookMetadata, saveCardToDB, getCardsForBook, deleteCardFromDB } from '../utils/db';
 
 const ePub = (window as any).ePub;
-const READER_PRELOAD_OFFSET = 8000;
-const READER_PRELOAD_DELTA = 1600;
+const PAGE_TURN_WHEEL_THRESHOLD = 48;
+const PAGE_TURN_COOLDOWN_MS = 650;
 
-/**
- * Stabilize a single epub.js View — override destroy() to no-op so
- * continuous manager cannot turn iframes into empty shells during
- * ordinary scrolling.  Original reference saved exactly once.
- */
-function stabilizeView(view: any) {
-  if (!view || typeof view.destroy !== 'function') return;
-  if ((view as any).__origDestroy) return;          // already stabilized
-  (view as any).__origDestroy = view.destroy;       // save once
-  view.destroy = () => {};                          // hide-only no-op
-}
-
-/**
- * Disable epub.js continuous manager trim/erase + stabilize all current
- * and future views so that off-screen iframes survive scroll-back.
- *
- * Call on initial render and every `rendered` event to catch new views.
- */
-function stabilizeContinuousReader(rendition: any) {
-  try {
-    const mgr = rendition?.manager;
-    if (!mgr) return;
-
-    // --- Patch createView so new views are stabilized before entering queue ---
-    if (typeof mgr.createView === 'function' && !(mgr as any).__origCreateView) {
-      (mgr as any).__origCreateView = mgr.createView;
-      const origCreateView = mgr.createView;
-      mgr.createView = function (this: any, ...args: any[]) {
-        const view = origCreateView.apply(this, args);
-        stabilizeView(view);
-        return view;
-      };
-    }
-
-    // --- Disable manager-level trim/erase (save originals only once) ---
-    if (typeof mgr.trim === 'function' && !(mgr as any).__origTrim) {
-      (mgr as any).__origTrim = mgr.trim.bind(mgr);
-    }
-    mgr.trim = () => {};
-
-    if (typeof mgr.erase === 'function' && !(mgr as any).__origErase) {
-      (mgr as any).__origErase = mgr.erase.bind(mgr);
-    }
-    mgr.erase = () => {};
-
-    // Clear pending trim timer (epub.js schedules delayed cleanup via trimTimeout)
-    if (mgr.trimTimeout) {
-      clearTimeout(mgr.trimTimeout);
-      mgr.trimTimeout = null;
-    }
-
-    // --- Stabilize existing views ---
-    getManagerViews(rendition).forEach(stabilizeView);
-  } catch {
-    // Defensive — never block normal rendering
-  }
-}
-
-/**
- * Extract current views from the continuous manager, probing defensively.
- * epub.js views collection may expose .displayed(), .all(), or be array-like.
- */
-function getManagerViews(rendition: any): any[] {
-  try {
-    const views = rendition?.manager?.views;
-    if (!views) return [];
-    if (typeof views.all === 'function') return views.all();
-    if (typeof views.displayed === 'function') return views.displayed();
-    const list: any[] = [];
-    if (typeof views.forEach === 'function') {
-      views.forEach((v: any) => list.push(v));
-      return list;
-    }
-    if (Array.isArray(views)) return views;
-    return [];
-  } catch {
-    return [];
-  }
-}
-
-/**
- * Programmatic display for search/TOC navigation in continuous reader.
- *
- * The stabilize patches disable trim/erase/destroy to prevent off-screen
- * iframe blanking during scroll, but these are exactly what epub.js needs
- * for long-distance programmatic jumps.  This helper temporarily restores
- * the originals, does the display, then re-stabilizes.
- */
 async function safeProgrammaticDisplay(rendition: any, target: string) {
-  const mgr = rendition?.manager;
-  if (!mgr) {
-    await rendition.display(target);
-    return;
-  }
-
-  // 1. Temporarily restore manager createView (so new views get real destroy)
-  const origCreateView = (mgr as any).__origCreateView;
-  if (origCreateView) mgr.createView = origCreateView;
-
-  // 2. Temporarily restore manager trim/erase
-  const origTrim = (mgr as any).__origTrim;
-  const origErase = (mgr as any).__origErase;
-  if (origTrim) mgr.trim = origTrim;
-  if (origErase) mgr.erase = origErase;
-
-  // 3. Temporarily restore view destroy on all current views
-  const views = getManagerViews(rendition);
-  for (const view of views) {
-    const orig = (view as any).__origDestroy;
-    if (orig) view.destroy = orig;
-  }
-
-  try {
-    await rendition.display(target);
-  } finally {
-    // 4. Re-stabilize: re-patches createView/trim/erase/no-op destroy for smooth scrolling
-    stabilizeContinuousReader(rendition);
-  }
+  await rendition.display(target);
 }
 
 /**
@@ -256,6 +140,9 @@ export const ReadingView: React.FC<ReadingViewProps> = ({ book, intention: initi
   const locationDebounceRef = useRef<any>(null);
   const progressRef = useRef(book.progress || 0);
   const tocRef = useRef<any[]>([]);
+  const pageTurnLockRef = useRef(false);
+  const wheelDeltaRef = useRef(0);
+  const wheelResetTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Reading session tracking
   const sessionStartedAtRef = useRef<number>(Date.now());
@@ -295,6 +182,7 @@ export const ReadingView: React.FC<ReadingViewProps> = ({ book, intention: initi
   useEffect(() => {
     let bookInstance: any = null;
     let cancelled = false;
+    const readerCleanupFns: Array<() => void> = [];
 
     const loadBook = async () => {
       setIsLoading(true);
@@ -310,26 +198,82 @@ export const ReadingView: React.FC<ReadingViewProps> = ({ book, intention: initi
         bookRef.current = bookInstance;
 
         if (!viewerRef.current) return;
+        const viewerElement = viewerRef.current;
 
-        // --- CONTINUOUS SCROLL MODE: epub.js native scroll ---
-        const rendition = bookInstance.renderTo(viewerRef.current, {
-          manager: 'continuous',
-          flow: 'scrolled',
+        const turnPage = async (direction: 'next' | 'prev') => {
+          const rendition = renditionRef.current;
+          if (!rendition || pageTurnLockRef.current) return;
+
+          pageTurnLockRef.current = true;
+          setSelection(null);
+          try {
+            if (direction === 'next') {
+              await rendition.next();
+            } else {
+              await rendition.prev();
+            }
+          } catch (err) {
+            console.warn('Page turn failed', err);
+          } finally {
+            window.setTimeout(() => {
+              pageTurnLockRef.current = false;
+            }, PAGE_TURN_COOLDOWN_MS);
+          }
+        };
+
+        const handleWheelForPageTurn = (event: WheelEvent) => {
+          const target = event.target as HTMLElement | null;
+          if (target?.closest?.('input, textarea, select, [contenteditable="true"]')) return;
+
+          const dominantDelta = Math.abs(event.deltaY) >= Math.abs(event.deltaX) ? event.deltaY : event.deltaX;
+          if (Math.abs(dominantDelta) < 1) return;
+
+          event.preventDefault();
+          event.stopPropagation();
+
+          wheelDeltaRef.current += dominantDelta;
+          if (wheelResetTimerRef.current) clearTimeout(wheelResetTimerRef.current);
+          wheelResetTimerRef.current = setTimeout(() => {
+            wheelDeltaRef.current = 0;
+            wheelResetTimerRef.current = null;
+          }, 220);
+
+          if (Math.abs(wheelDeltaRef.current) < PAGE_TURN_WHEEL_THRESHOLD) return;
+
+          const direction = wheelDeltaRef.current > 0 ? 'next' : 'prev';
+          wheelDeltaRef.current = 0;
+          void turnPage(direction);
+        };
+
+        const bindContentWheel = (contents: any) => {
+          const doc = contents?.document;
+          if (!doc || (doc as any).__deepreadWheelBound) return;
+          (doc as any).__deepreadWheelBound = true;
+          doc.addEventListener('wheel', handleWheelForPageTurn, { passive: false });
+          readerCleanupFns.push(() => {
+            doc.removeEventListener('wheel', handleWheelForPageTurn);
+            delete (doc as any).__deepreadWheelBound;
+          });
+        };
+
+        // --- PAGINATED READER: vertical wheel maps to page/chapter turns ---
+        const rendition = bookInstance.renderTo(viewerElement, {
+          manager: 'default',
+          flow: 'paginated',
           width: '100%',
           height: '100%',
           spread: 'none',
-          offset: READER_PRELOAD_OFFSET,
-          offsetDelta: READER_PRELOAD_DELTA,
           allowScriptedContent: false,
         });
 
         renditionRef.current = rendition;
-        stabilizeContinuousReader(rendition);
+        viewerElement.addEventListener('wheel', handleWheelForPageTurn, { passive: false });
+        readerCleanupFns.push(() => viewerElement.removeEventListener('wheel', handleWheelForPageTurn));
+        rendition.hooks.content.register(bindContentWheel);
+        rendition.on('rendered', (_section: any, view: any) => bindContentWheel(view?.contents));
+
         await rendition.display(book.lastLocation || undefined);
         if (cancelled) return;
-
-        // 每次渲染完成后重新禁用 trim，防止 manager 内部重新调度
-        rendition.on('rendered', () => stabilizeContinuousReader(rendition));
 
         // --- TOC ---
         bookInstance.loaded.navigation.then((nav: any) => {
@@ -449,6 +393,8 @@ export const ReadingView: React.FC<ReadingViewProps> = ({ book, intention: initi
     return () => {
       cancelled = true;
       if (locationDebounceRef.current) clearTimeout(locationDebounceRef.current);
+      if (wheelResetTimerRef.current) clearTimeout(wheelResetTimerRef.current);
+      readerCleanupFns.forEach(cleanup => cleanup());
       if (bookInstance) bookInstance.destroy();
 
       // Flush pending card saves
@@ -647,9 +593,8 @@ export const ReadingView: React.FC<ReadingViewProps> = ({ book, intention: initi
       } catch {}
     }
 
-    // 2. Always sweep all surviving iframes in the viewer — continuous reader
-    //    keeps off-screen iframes alive and getContents() may not list them all;
-    //    also covers the case where renditionRef is momentarily null.
+    // 2. Always sweep iframes in the viewer; getContents() may miss a transient
+    //    iframe while epub.js is re-rendering after navigation.
     const viewer = viewerRef.current;
     if (viewer) {
       try {
@@ -678,9 +623,7 @@ export const ReadingView: React.FC<ReadingViewProps> = ({ book, intention: initi
     isSearchNavigatingRef.current = true;
 
     try {
-      // 3. Navigate via safe helper — temporarily restores trim/erase/destroy
-      //    so epub.js can properly clean up views for long-distance jumps,
-      //    then re-stabilizes in its finally block.
+      // 3. Navigate via the same display helper used by TOC jumps.
       await safeProgrammaticDisplay(rendition, cfi);
     } catch (err) {
       console.warn('navigateToResult: display failed', err);

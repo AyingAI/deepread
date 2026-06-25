@@ -1,8 +1,21 @@
 {
   "name": "deepread",
   "private": true,
+  "description": "Local-first immersive EPUB reader for deep thinking, notes, and AI reflection.",
   "version": "0.0.0",
+  "license": "MIT",
   "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/AyingAI/deepread.git"
+  },
+  "bugs": {
+    "url": "https://github.com/AyingAI/deepread/issues"
+  },
+  "homepage": "https://github.com/AyingAI/deepread#readme",
+  "engines": {
+    "node": ">=18"
+  },
   "scripts": {
     "dev": "tsx server.ts",
     "build": "vite build && esbuild server.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=dist/server.cjs",

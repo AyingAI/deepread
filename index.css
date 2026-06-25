@@ -1,7 +1,7 @@
-/* EPUB continuous scroll: inner container must be scrollable */
+/* EPUB paginated reader: keep one fixed viewport; wheel events turn pages. */
 .epub-container {
   background: #FAF0E6 !important;
-  overflow-y: auto !important;
+  overflow: hidden !important;
   overscroll-behavior: contain;
   scroll-behavior: auto;
   height: 100% !important;

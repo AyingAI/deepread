@@ -77,7 +77,7 @@ async function startServer() {
       const apiKey = process.env.MIMO_API_KEY;
       if (!apiKey) {
         return res.status(500).json({
-          error: "未检测到 API 密钥。请在侧边菜单栏中的【Settings > Secrets】中配置您的 MIMO_API_KEY。"
+          error: "未检测到 API 密钥。请在书桌右上角【AI 配置】中填写 API Key，或在 .env.local 中配置 MIMO_API_KEY。"
         });
       }
 
@@ -155,7 +155,7 @@ async function startServer() {
 
       if (!response.ok) {
         const errorBody = await response.text();
-        console.error("MIMO API Error:", response.status, errorBody);
+        console.error("AI API Error:", response.status, errorBody);
         return res.status(500).json({ error: `AI 服务请求失败 (${response.status})，请稍后重试。` });
       }
 
