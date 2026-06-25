@@ -3,9 +3,9 @@ import fs from "fs";
 import path from "path";
 import { createServer as createViteServer } from "vite";
 
-const ENV_KEYS = ["MIMO_API_KEY", "MIMO_API_BASE", "MIMO_MODEL"] as const;
+const ENV_KEYS = ["AI_API_KEY", "AI_API_BASE", "AI_MODEL"] as const;
 
-/** 读取 .env.local 中的 MIMO_* 到 process.env（仅当 process.env 中未设置时） */
+/** 读取 .env.local 中的 AI_* 到 process.env（仅当 process.env 中未设置时） */
 function loadEnvLocal() {
   try {
     const envPath = path.join(process.cwd(), ".env.local");
@@ -47,8 +47,8 @@ function readEnvSnapshot(): Record<string, string> {
   return snap;
 }
 
-const getApiBase = () => process.env.MIMO_API_BASE || "https://api.openai.com/v1";
-const getModel = () => process.env.MIMO_MODEL || "gpt-4o-mini";
+const getApiBase = () => process.env.AI_API_BASE || "https://api.openai.com/v1";
+const getModel = () => process.env.AI_MODEL || "gpt-4o-mini";
 
 async function startServer() {
   loadEnvLocal();
@@ -74,10 +74,10 @@ async function startServer() {
         return res.status(400).json({ error: "需要选择划线的文本/名句" });
       }
 
-      const apiKey = process.env.MIMO_API_KEY;
+      const apiKey = process.env.AI_API_KEY;
       if (!apiKey) {
         return res.status(500).json({
-          error: "未检测到 API 密钥。请在书桌右上角【AI 配置】中填写 API Key，或在 .env.local 中配置 MIMO_API_KEY。"
+          error: "未检测到 API 密钥。请在书桌右上角【AI 配置】中填写 API Key，或在 .env.local 中配置 AI_API_KEY。"
         });
       }
 
@@ -247,12 +247,12 @@ async function startServer() {
 
   // --- Settings API ---
   app.get("/api/settings", (_req, res) => {
-    const key = process.env.MIMO_API_KEY || "";
+    const key = process.env.AI_API_KEY || "";
     res.json({
       hasApiKey: !!key,
       apiKey: key ? key.slice(0, 3) + "****" + key.slice(-4) : "",
-      apiBase: process.env.MIMO_API_BASE || "https://api.openai.com/v1",
-      model: process.env.MIMO_MODEL || "gpt-4o-mini",
+      apiBase: process.env.AI_API_BASE || "https://api.openai.com/v1",
+      model: process.env.AI_MODEL || "gpt-4o-mini",
     });
   });
 
@@ -263,7 +263,7 @@ async function startServer() {
       const snapshot = readEnvSnapshot();
       const merged: Record<string, string> = {};
       for (const k of ENV_KEYS) {
-        const incoming = k === "MIMO_API_KEY" ? apiKey : k === "MIMO_API_BASE" ? apiBase : model;
+        const incoming = k === "AI_API_KEY" ? apiKey : k === "AI_API_BASE" ? apiBase : model;
         merged[k] = (incoming && incoming.trim()) || snapshot[k] || process.env[k] || "";
       }
       // 写回 .env.local
@@ -283,8 +283,8 @@ async function startServer() {
   app.post("/api/settings/models", async (req, res) => {
     try {
       const { apiKey, apiBase } = req.body;
-      const key = apiKey || process.env.MIMO_API_KEY;
-      const base = (apiBase || process.env.MIMO_API_BASE || "https://api.openai.com/v1").replace(/\/+$/, "");
+      const key = apiKey || process.env.AI_API_KEY;
+      const base = (apiBase || process.env.AI_API_BASE || "https://api.openai.com/v1").replace(/\/+$/, "");
       if (!key) return res.status(400).json({ error: "请先填写 API Key" });
 
       const response = await fetch(`${base}/models`, {

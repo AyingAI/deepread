@@ -14,7 +14,7 @@
 - framer-motion（动画）
 - IndexedDB（本地持久化：books / content / cards）
 - Tailwind CSS（CDN）
-- OpenAI 兼容 Chat Completions API（环境变量沿用 `MIMO_*` 历史命名）
+- OpenAI 兼容 Chat Completions API（通过通用 `AI_*` 环境变量配置）
 
 ## 项目结构
 
@@ -46,9 +46,9 @@ npm start      # 生产模式 dist/server.cjs
 ## 环境变量
 
 `.env.local` 中配置：
-- `MIMO_API_KEY` — 使用 AI 功能时必填
-- `MIMO_API_BASE` — 默认 OpenAI 兼容端点
-- `MIMO_MODEL` — 默认 gpt-4o-mini
+- `AI_API_KEY` — 使用 AI 功能时必填
+- `AI_API_BASE` — 默认 OpenAI 兼容端点
+- `AI_MODEL` — 默认 gpt-4o-mini
 
 ## 当前进度
 
