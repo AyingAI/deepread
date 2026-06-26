@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Book as BookType, ThoughtCard } from '../types';
+import { AiReflectionAction, Book as BookType, ThoughtCard } from '../types';
 import { GripVertical, ArrowLeft, PenTool, Brain, MessageSquare, Link, Edit3, List, Trash2, FileDown, BookOpenCheck, Search, X } from 'lucide-react';
 import { getBookContentFromDB, updateBookMetadata, saveCardToDB, getCardsForBook, deleteCardFromDB } from '../utils/db';
 
@@ -472,6 +472,29 @@ export const ReadingView: React.FC<ReadingViewProps> = ({ book, intention: initi
         cardSaveTimersRef.current.delete(id);
       }, 600));
     }
+  };
+
+  const saveCardAiResponse = async (id: string, action: AiReflectionAction, response: string) => {
+    const trimmed = response.trim();
+    if (!trimmed) return;
+
+    let updatedCard: ThoughtCard | undefined;
+    cardsRef.current = cardsRef.current.map(card => {
+      if (card.id !== id) return card;
+      updatedCard = {
+        ...card,
+        aiResponses: {
+          ...(card.aiResponses || {}),
+          [action]: trimmed,
+        },
+      };
+      return updatedCard;
+    });
+
+    if (!updatedCard) return;
+    setCards(cardsRef.current);
+    pendingCardsRef.current.delete(id);
+    await saveCardToDB(updatedCard);
   };
 
   const flushCardNote = (id: string) => {
@@ -951,7 +974,7 @@ export const ReadingView: React.FC<ReadingViewProps> = ({ book, intention: initi
                 </motion.div>
               )}
               {cards.map(card => (
-                <ThoughtCardItem key={card.id} card={card} onUpdate={updateCardNote} onDelete={handleDeleteCard} onFlush={flushCardNote} bookTitle={book.title} bookAuthor={book.author} intention={currentIntention} />
+                <ThoughtCardItem key={card.id} card={card} onUpdate={updateCardNote} onSaveAiResponse={saveCardAiResponse} onDelete={handleDeleteCard} onFlush={flushCardNote} bookTitle={book.title} bookAuthor={book.author} intention={currentIntention} />
               ))}
             </AnimatePresence>
           </div>
@@ -1056,21 +1079,31 @@ export const ReadingView: React.FC<ReadingViewProps> = ({ book, intention: initi
 const ThoughtCardItem: React.FC<{
   card: ThoughtCard;
   onUpdate: (id: string, note: string) => void;
+  onSaveAiResponse: (id: string, action: AiReflectionAction, response: string) => Promise<void>;
   onDelete: (id: string) => void;
   onFlush: (id: string) => void;
   bookTitle: string;
   bookAuthor: string;
   intention: string;
-}> = ({ card, onUpdate, onDelete, onFlush, bookTitle, bookAuthor, intention }) => {
+}> = ({ card, onUpdate, onSaveAiResponse, onDelete, onFlush, bookTitle, bookAuthor, intention }) => {
   const [isFocused, setIsFocused] = useState(false);
-  const [activeAction, setActiveAction] = useState<'explain' | 'challenge' | 'associate' | null>(null);
+  const [activeAction, setActiveAction] = useState<AiReflectionAction | null>(null);
   const [aiResponse, setAiResponse] = useState<string | null>(null);
   const [isAiLoading, setIsAiLoading] = useState(false);
   const [aiError, setAiError] = useState<string | null>(null);
   const requestSeqRef = useRef(0);
 
-  const handleAiReflect = async (action: 'explain' | 'challenge' | 'associate') => {
+  const handleAiReflect = async (action: AiReflectionAction, options: { force?: boolean } = {}) => {
     const seq = ++requestSeqRef.current;
+    const savedResponse = card.aiResponses?.[action]?.trim();
+    if (savedResponse && !options.force) {
+      setActiveAction(action);
+      setAiResponse(savedResponse);
+      setAiError(null);
+      setIsAiLoading(false);
+      return;
+    }
+
     setIsAiLoading(true);
     setAiError(null);
     setActiveAction(action);
@@ -1088,6 +1121,8 @@ const ThoughtCardItem: React.FC<{
         throw new Error(errMsg);
       }
 
+      let finalResponse = "";
+
       if (res.body) {
         const reader = res.body.getReader();
         const decoder = new TextDecoder();
@@ -1096,12 +1131,19 @@ const ThoughtCardItem: React.FC<{
           if (done) break;
           if (seq !== requestSeqRef.current) { reader.cancel(); return; }
           const chunk = decoder.decode(value, { stream: true });
-          if (chunk) setAiResponse(prev => (prev || "") + chunk);
+          if (chunk) {
+            finalResponse += chunk;
+            setAiResponse(prev => (prev || "") + chunk);
+          }
         }
       } else {
-        const text = await res.text();
+        finalResponse = await res.text();
         if (seq !== requestSeqRef.current) return;
-        setAiResponse(text);
+        setAiResponse(finalResponse);
+      }
+
+      if (seq === requestSeqRef.current) {
+        await onSaveAiResponse(card.id, action, finalResponse);
       }
     } catch (err: any) {
       if (seq !== requestSeqRef.current) return;
@@ -1149,7 +1191,12 @@ const ThoughtCardItem: React.FC<{
                   {activeAction === 'associate' && <Link size={12} className="text-[#8B4513]" />}
                   {activeAction === 'explain' ? '意境深度释义' : activeAction === 'challenge' ? '辩证思辨视角' : '跨界启发联想'}
                 </span>
-                <button onClick={() => { setActiveAction(null); setAiResponse(null); setAiError(null); }} className="text-[11px] opacity-60 hover:opacity-100 text-[#8B4513] transition-opacity cursor-pointer font-serif font-bold">收起</button>
+                <div className="flex items-center gap-3">
+                  {card.aiResponses?.[activeAction] && !isAiLoading && (
+                    <button onClick={() => handleAiReflect(activeAction, { force: true })} className="text-[11px] opacity-60 hover:opacity-100 text-[#8B4513] transition-opacity cursor-pointer font-serif font-bold">重新生成</button>
+                  )}
+                  <button onClick={() => { setActiveAction(null); setAiResponse(null); setAiError(null); }} className="text-[11px] opacity-60 hover:opacity-100 text-[#8B4513] transition-opacity cursor-pointer font-serif font-bold">收起</button>
+                </div>
               </div>
               {isAiLoading && !aiResponse && (
                 <div className="flex flex-col items-center justify-center py-6 space-y-3">

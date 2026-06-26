@@ -28,4 +28,7 @@ export interface ThoughtCard {
   quote: string;
   note: string;
   timestamp: number;
+  aiResponses?: Partial<Record<AiReflectionAction, string>>;
 }
+
+export type AiReflectionAction = 'explain' | 'challenge' | 'associate';
