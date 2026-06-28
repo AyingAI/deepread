@@ -101,8 +101,9 @@ function stabilizeEpubCoverPage(contents: any) {
     const win = contents?.window as Window | undefined;
     if (!doc || !doc.body) return;
 
-    if (!doc.getElementById('dr-cover-page-style')) {
-      const style = doc.createElement('style');
+    let style = doc.getElementById('dr-cover-page-style') as HTMLStyleElement | null;
+    if (!style) {
+      style = doc.createElement('style');
       style.id = 'dr-cover-page-style';
       style.textContent = `
         html.dr-cover-page,
@@ -139,8 +140,10 @@ function stabilizeEpubCoverPage(contents: any) {
           mix-blend-mode: normal !important;
         }
       `;
-      doc.head.appendChild(style);
     }
+    // Keep this style after epub.js theme rules; otherwise equal-specificity
+    // !important image rules from the theme can win after page cache restores.
+    doc.head.appendChild(style);
 
     const detect = () => {
       const text = (doc.body.innerText || '').replace(/\s+/g, '').trim();
@@ -182,6 +185,12 @@ function mediaReadyCallbacks(doc: Document, callback: () => void) {
     if ((img as HTMLImageElement).complete) return;
     img.addEventListener('load', callback, { once: true });
   });
+}
+
+function stabilizeRenderedCoverPages(rendition: any) {
+  try {
+    rendition?.getContents?.().forEach((contents: any) => stabilizeEpubCoverPage(contents));
+  } catch {}
 }
 
 interface ReadingViewProps {
@@ -301,6 +310,8 @@ export const ReadingView: React.FC<ReadingViewProps> = ({ book, intention: initi
             } else {
               await rendition.prev();
             }
+            stabilizeRenderedCoverPages(rendition);
+            window.setTimeout(() => stabilizeRenderedCoverPages(rendition), 120);
           } catch (err) {
             console.warn('Page turn failed', err);
           } finally {
@@ -360,18 +371,10 @@ export const ReadingView: React.FC<ReadingViewProps> = ({ book, intention: initi
         readerCleanupFns.push(() => viewerElement.removeEventListener('wheel', handleWheelForPageTurn));
         rendition.hooks.content.register(bindContentWheel);
         rendition.hooks.content.register(stabilizeEpubCoverPage);
-        rendition.on('rendered', (_section: any, view: any) => bindContentWheel(view?.contents));
-
-        await rendition.display(book.lastLocation || undefined);
-        if (cancelled) return;
-
-        // --- TOC ---
-        bookInstance.loaded.navigation.then((nav: any) => {
-          if (!cancelled) {
-            const items = nav.toc || [];
-            setToc(items);
-            tocRef.current = items;
-          }
+        rendition.on('rendered', (_section: any, view: any) => {
+          bindContentWheel(view?.contents);
+          stabilizeEpubCoverPage(view?.contents);
+          window.setTimeout(() => stabilizeRenderedCoverPages(rendition), 120);
         });
 
         // --- STYLING ---
@@ -404,6 +407,18 @@ export const ReadingView: React.FC<ReadingViewProps> = ({ book, intention: initi
           link.setAttribute('rel', 'stylesheet');
           link.setAttribute('href', 'https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@200;300;400;500;700&display=swap');
           contents.document.head.appendChild(link);
+        });
+
+        await rendition.display(book.lastLocation || undefined);
+        if (cancelled) return;
+
+        // --- TOC ---
+        bookInstance.loaded.navigation.then((nav: any) => {
+          if (!cancelled) {
+            const items = nav.toc || [];
+            setToc(items);
+            tocRef.current = items;
+          }
         });
 
         rendition.getContents().forEach((contents: any) => stabilizeEpubCoverPage(contents));
@@ -458,6 +473,7 @@ export const ReadingView: React.FC<ReadingViewProps> = ({ book, intention: initi
         // --- SAVE LOCATION on scroll ---
         rendition.on('relocated', (location: any) => {
           updateChapterLabel(location.start?.href || '');
+          stabilizeRenderedCoverPages(rendition);
 
           if (locationDebounceRef.current) clearTimeout(locationDebounceRef.current);
           locationDebounceRef.current = setTimeout(async () => {
