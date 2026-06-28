@@ -1,12 +1,30 @@
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Book as BookType } from '../types';
 import { Plus, Trash2, Settings, Eye, EyeOff } from 'lucide-react';
-import { saveBookToDB, getBooksFromDB, deleteBookFromDB } from '../utils/db';
+import { saveBookToDB, getBooksFromDB, deleteBookFromDB, getBookContentFromDB, updateBookMetadata } from '../utils/db';
 
 // Access the global ePub instance loaded via <script> tag
 const ePub = (window as any).ePub;
+
+async function extractCoverImage(arrayBuffer: ArrayBuffer): Promise<string | undefined> {
+  const book = ePub(arrayBuffer);
+  try {
+    const coverUrl = await book.coverUrl();
+    if (!coverUrl) return undefined;
+    const resp = await fetch(coverUrl);
+    const blob = await resp.blob();
+    return await new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onloadend = () => resolve(reader.result as string);
+      reader.onerror = reject;
+      reader.readAsDataURL(blob);
+    });
+  } finally {
+    book.destroy?.();
+  }
+}
 
 interface DeskViewProps {
   onSelectBook: (book: BookType) => void;
@@ -15,6 +33,7 @@ interface DeskViewProps {
 export const DeskView: React.FC<DeskViewProps> = ({ onSelectBook }) => {
   const [books, setBooks] = useState<BookType[]>([]);
   const [isUploading, setIsUploading] = useState(false);
+  const coverBackfillAttemptedRef = useRef<Set<string>>(new Set());
 
   // Settings state
   const [showSettings, setShowSettings] = useState(false);
@@ -94,11 +113,40 @@ export const DeskView: React.FC<DeskViewProps> = ({ onSelectBook }) => {
   };
 
   useEffect(() => {
+    let cancelled = false;
+
+    const backfillMissingCovers = async (storedBooks: BookType[]) => {
+      for (const storedBook of storedBooks) {
+        if (cancelled) return;
+        if (storedBook.coverImage || coverBackfillAttemptedRef.current.has(storedBook.id)) continue;
+        coverBackfillAttemptedRef.current.add(storedBook.id);
+
+        try {
+          const content = await getBookContentFromDB(storedBook.id);
+          if (!content) continue;
+          const coverImage = await extractCoverImage(content);
+          if (!coverImage) continue;
+
+          await updateBookMetadata(storedBook.id, { coverImage });
+          if (cancelled) return;
+          setBooks(prev => prev.map(book => book.id === storedBook.id ? { ...book, coverImage } : book));
+        } catch (err) {
+          console.warn('Failed to backfill cover image:', storedBook.title, err);
+        }
+      }
+    };
+
     const loadBooks = async () => {
         const storedBooks = await getBooksFromDB();
-        setBooks(storedBooks.sort((a,b) => Number(b.id) - Number(a.id))); // Newest first
+        const sortedBooks = storedBooks.sort((a,b) => Number(b.id) - Number(a.id)); // Newest first
+        setBooks(sortedBooks);
+        void backfillMissingCovers(sortedBooks);
     };
     loadBooks();
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   // Walnut / Cherry wood texture
@@ -131,19 +179,11 @@ export const DeskView: React.FC<DeskViewProps> = ({ onSelectBook }) => {
         // Try to extract cover image from EPUB
         let coverImage: string | undefined;
         try {
-          const coverUrl = await book.coverUrl();
-          if (coverUrl) {
-            const resp = await fetch(coverUrl);
-            const blob = await resp.blob();
-            coverImage = await new Promise<string>((resolve, reject) => {
-              const reader = new FileReader();
-              reader.onloadend = () => resolve(reader.result as string);
-              reader.onerror = reject;
-              reader.readAsDataURL(blob);
-            });
-          }
+          coverImage = await extractCoverImage(arrayBuffer.slice(0));
         } catch {
           // Cover extraction failed, fall back to coverColor
+        } finally {
+          book.destroy?.();
         }
 
         const newBook: BookType = {

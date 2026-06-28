@@ -95,6 +95,95 @@ function applySearchHighlightToDocument(doc: Document, query: string) {
   } catch {}
 }
 
+function stabilizeEpubCoverPage(contents: any) {
+  try {
+    const doc = contents?.document as Document | undefined;
+    const win = contents?.window as Window | undefined;
+    if (!doc || !doc.body) return;
+
+    if (!doc.getElementById('dr-cover-page-style')) {
+      const style = doc.createElement('style');
+      style.id = 'dr-cover-page-style';
+      style.textContent = `
+        html.dr-cover-page,
+        body.dr-cover-page {
+          width: 100% !important;
+          height: 100% !important;
+          margin: 0 !important;
+          padding: 0 !important;
+          overflow: hidden !important;
+        }
+        body.dr-cover-page {
+          display: flex !important;
+          align-items: center !important;
+          justify-content: center !important;
+          background: transparent !important;
+        }
+        body.dr-cover-page > * {
+          max-width: 100% !important;
+          max-height: 100% !important;
+        }
+        body.dr-cover-page * {
+          box-sizing: border-box !important;
+        }
+        body.dr-cover-page img,
+        body.dr-cover-page svg {
+          width: auto !important;
+          height: auto !important;
+          max-width: min(100%, 72vh) !important;
+          max-height: 100% !important;
+          object-fit: contain !important;
+          object-position: center center !important;
+          margin: auto !important;
+          display: block !important;
+          mix-blend-mode: normal !important;
+        }
+      `;
+      doc.head.appendChild(style);
+    }
+
+    const detect = () => {
+      const text = (doc.body.innerText || '').replace(/\s+/g, '').trim();
+      const media = Array.from(doc.body.querySelectorAll('img, svg'));
+      const href = doc.location?.href?.toLowerCase() || '';
+      const hasCoverHint = /cover|titlepage|title-page|封面/.test(href) || media.some(el => {
+        const img = el as HTMLImageElement;
+        return /cover|titlepage|title-page|封面/.test(`${img.id || ''} ${img.className || ''} ${img.getAttribute('alt') || ''} ${img.getAttribute('src') || ''}`.toLowerCase());
+      });
+      const viewportArea = Math.max(1, (doc.documentElement.clientWidth || 0) * (doc.documentElement.clientHeight || 0));
+      const largestMediaArea = media.reduce((largest, el) => {
+        const rect = el.getBoundingClientRect();
+        return Math.max(largest, rect.width * rect.height);
+      }, 0);
+      const hasDominantMedia = largestMediaArea > viewportArea * 0.2;
+      const isCoverLike = media.length > 0 && (hasCoverHint || (text.length <= 80 && hasDominantMedia));
+      doc.documentElement.classList.toggle('dr-cover-page', isCoverLike);
+      doc.body.classList.toggle('dr-cover-page', isCoverLike);
+      if (isCoverLike) {
+        doc.body.querySelectorAll('svg, svg image').forEach(el => {
+          el.setAttribute('preserveAspectRatio', 'xMidYMid meet');
+        });
+      }
+    };
+
+    if (win?.requestAnimationFrame) {
+      win.requestAnimationFrame(detect);
+      win.setTimeout(detect, 80);
+      win.setTimeout(detect, 300);
+      mediaReadyCallbacks(doc, detect);
+    } else {
+      detect();
+    }
+  } catch {}
+}
+
+function mediaReadyCallbacks(doc: Document, callback: () => void) {
+  doc.body.querySelectorAll('img').forEach(img => {
+    if ((img as HTMLImageElement).complete) return;
+    img.addEventListener('load', callback, { once: true });
+  });
+}
+
 interface ReadingViewProps {
   book: BookType;
   intention: string;
@@ -270,6 +359,7 @@ export const ReadingView: React.FC<ReadingViewProps> = ({ book, intention: initi
         viewerElement.addEventListener('wheel', handleWheelForPageTurn, { passive: false });
         readerCleanupFns.push(() => viewerElement.removeEventListener('wheel', handleWheelForPageTurn));
         rendition.hooks.content.register(bindContentWheel);
+        rendition.hooks.content.register(stabilizeEpubCoverPage);
         rendition.on('rendered', (_section: any, view: any) => bindContentWheel(view?.contents));
 
         await rendition.display(book.lastLocation || undefined);
@@ -315,6 +405,8 @@ export const ReadingView: React.FC<ReadingViewProps> = ({ book, intention: initi
           link.setAttribute('href', 'https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@200;300;400;500;700&display=swap');
           contents.document.head.appendChild(link);
         });
+
+        rendition.getContents().forEach((contents: any) => stabilizeEpubCoverPage(contents));
 
         // --- SEARCH HIGHLIGHT: apply to every iframe that loads via hook ---
         rendition.hooks.content.register((contents: any) => {
