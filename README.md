@@ -1,5 +1,7 @@
 # 深读 Deepread
 
+![深读 DeepRead 封面](docs/deepread-cover.png)
+
 > 不是为了更快读完一本书，而是为了真正想清楚一件事。
 
 Deepread 是一个本地运行的沉浸式 EPUB 阅读器。它把阅读流程从“打开书、划线、退出”改成一条更完整的思考链路：
